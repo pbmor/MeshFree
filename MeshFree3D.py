@@ -66,80 +66,143 @@ def Local_Pts(Pts,b,Mins,bN,id):
                     Points += b[Iid][Jid][Kid]
     return Points
 
-def ModRK3D(nodes,supp,supphat,order,weight):
+def NearestNeighbour(Pts,Ranges,N,r):
+    b, Mins, bN = Pt_IDs(Pts,Ranges,N,r)
+
+    #Create empty array
+    NN = []
+    for i in range(N):
+        NN.append([])
+
+    #Find nearest neighbours of each point
+    for id in range(N):
+        Points = Local_Pts(Pts,b,Mins,bN,id)
+        l =  NN_BF(Pts[id][:],Points,r)
+        NN[id].append(l)
+        print(id)
+
+    return NN
+
+
+def ModRK3D(nodes,r,order,weight,Ranges):
+    
+    
+    supp = 3*r
+    supphat = 0.9*r
+
+    nNodes = len(nodes)
+    b, Mins, bN = Pt_IDs(nodes,Ranges,nNodes,r)
+
+    shape_dx = np.zeros(nNodes)
+    shape_dy = np.zeros(nNodes)
+    shape_dz = np.zeros(nNodes)
+    
+    phi=0.5+np.sqrt(5./4.)
+    Pos = np.zeros((20,3))
+    Pos[0,:]=[1.,1.,1.]
+    Pos[1,:]=[1.,1.,-1.]
+    Pos[2,:]=[1.,-1.,1.]
+    Pos[3,:]=[1.,-1.,-1.]
+    Pos[4,:]=[-1.,1.,1.]
+    Pos[5,:]=[-1.,1.,-1.]
+    Pos[6,:]=[-1.,-1.,1.]
+    Pos[7,:]=[-1.,-1.,-1.]
+
+    Pos[8,:]=[0.,1./phi,phi]
+    Pos[9,:]=[0.,1./phi,-phi]
+    Pos[10,:]=[0.,-1./phi,phi]
+    Pos[11,:]=[0.,-1./phi,-phi]
+
+    Pos[12,:]=[1./phi,phi,0.]
+    Pos[13,:]=[1./phi,-phi,0.]
+    Pos[14,:]=[-1./phi,phi,0.]
+    Pos[15,:]=[-1./phi,-phi,0.]
+
+    Pos[16,:]=[phi,0.,1./phi]
+    Pos[17,:]=[-phi,0.,1./phi]
+    Pos[18,:]=[phi,0.,-1./phi]
+    Pos[19,:]=[-phi,0.,-1./phi]
+    
+
+    for i in range(nNodes):
+        print('Node:',i)
+        for j in range(20):
+            X = (nodes[i,:]+(Pos[j,:]/np.sqrt(sum((Pos[j,k]**2 for k in range(3)))))*r)
+            shape = ModRK3DShape(X, nodes,supp,supphat,order,b,Mins,bN,i)
+            for k in range(len(shape)):
+                shape_dx[i] += shape[k]*Pos[j,0]
+                shape_dy[i] += shape[k]*Pos[j,1]
+                shape_dz[i] += shape[k]*Pos[j,2]
+        for j in range(nNodes):
+            shape_dx[i] *= 3/20
+            shape_dy[i] *= 3/20
+            shape_dz[i] *= 3/20
+    
+    
+    return shape, shape_dx, shape_dy,shape_dz
+
+def ModRK3DShape(node, nodes,supp,supphat,order,b,Mins,bN,i):
     
     nNodes = len(nodes)
-    shape = ModRK3DShape(nodes, points)
+    shape = np.zeros((nNodes,nNodes))
+    nb = 3+1
     
-    #Create empty dshape array
-    dshape = np.zeros((nNodes,nNodes))
+    X = node
+    M = np.zeros((nb,nb))
+    Fhat = np.zeros((4,1))
+    Local_Points = Local_Pts(nodes,b,Mins,bN,i)
+    nLP = len(Local_Points)
+    print('NearestNeighbour Length',nLP)
+    shape = np.zeros(nLP)
+    for j in range(nLP):
+        s=Local_Points[j][:]
+        Diff = X-s
+        DiffMag = np.sqrt(sum((Diff[k]**2 for k in range(3))))
+        phi=calc_phi(DiffMag,supp)
+        phihat=calc_phi(DiffMag,supphat)
+        # Calculation of moment matrix M
+        [H,dH,HT]=basis(Diff,order)
+        M += (HT.dot(H))*phi
+        Fhat += HT*phihat
+ 
+    invM = np.linalg.inv(M)
     
-    dshape[0,:] = np.zeros((1,nNodes))
-
-    for i in range(1,nNodes):
-        dhsape[i,:] = np.zeros((1,nNodes))
-
-    dshape[nNodes-1,:] = np.zeros((1,nNodes))
-
-    return shape, dshape
-
-def ModRK3DShape(nodes, points,supp,supphat,order):
-    
-    nNodes = len(nodes)
-    nPoints = len(points)
-    shape = np.zeros((nPoints,nNodes))
-    nb = order+1
-    for i in range(nPoints):
-        X=points[i]
-        M = np.zeros((nb,nb))
-        Fhat = np.zeros((nb,1))
-        for j in range(Nodes):
-            s=nodes[j]
-            if(abs(X-s)>supp):
-                phi=calc_phi(X-s,supp)
-                phihat=calc_phi(X-s,supphat)
-                # Calculation of moment matrix M
-                [H,dH]=basis(X-s,order)
-                M += np.transpose(H)*H*phi
-                Fhat += (np.transpose(H))*phihat
-    
-        invM = inv(M)
-    
-    for j in range(nNodes):
+    for j in range(nLP):
         # Calculate different shape functions here
-        s=nodes(j)
-        phi=calc_phi(X-s,supp)
-        phihat=calc_phi(X-s,supphat)
-        [H,dH] = basis(X-s,order)
-        H0 = basis(0,order)
-        
-        shape[i,j] = np.matmul(H,np.matmul(invM,(np.transpose(H0)-Fhat)))*phi+phihat
-
+        s=Local_Points[j][:]
+        Diff = X-s
+        DiffMag = np.sqrt(sum((Diff[k]**2 for k in range(3))))
+        phi=calc_phi(DiffMag,supp)
+        phihat=calc_phi(DiffMag,supphat)
+        [H,dH,HT] = basis(Diff,order)
+        [H0,dH0,HT0] = basis(np.zeros(3),order)
+        shape[j] = H.dot(invM.dot((HT0-Fhat)))*phi+phihat
+    
     return shape
 
 def basis(x,order):
     # Returns the basis and it's derivative at a point x based upon the order
     if order==1:
-        H = [1,x]
-        dH = [0,1]
+        
+        H  = np.array([[1,x[0],x[1],x[2]]])
+        dH = np.array([[0,1,0,0]])
 
     elif order==2:
-        H = [1,x,x**2]
-        dH = [0,1,2*x]
-
-    return H, dH
-
-def calc_phi(X,a):
-    # Returns the weight function at point X with support size a
-    z=abs(X)/a
-
-    if (z>1):
-        phi = 0
+        H  = np.array([[1,x[0],x[1]**2]])
+        dH = np.array([[0,1,2*x[1]]])
     
-    if (z>0.5):
-        phi=2*(1-z)**3
+    elif order==3:
+        H  = np.array([[1,x[0],x[1]**2,  x[2]**3]])
+        dH = np.array([[0,   1, 2*x[1],3*x[2]**2]])
+    HT = H.transpose()
+    return H, dH, HT
 
-    phi = 1-6*z^2+6*z**3;
+def calc_phi(z,a):
+
+    if (z<a):
+        phi = 1
+    else:
+        phi = 0
 
     return phi
 
@@ -162,42 +225,27 @@ if __name__=='__main__':
     Pts = vtk_to_numpy(polydata.GetPoints().GetData())
     Ranges = np.array(polydata.GetPoints().GetBounds())
     N = len(Pts[:,0])
-    print(N)
+    
     #Define search radius
     r = 0.5
-    
-    b, Mins, bN = Pt_IDs(Pts,Ranges,N,r)
 
     #Create empty array
-    NN = []
-    for i in range(N):
-        NN.append([])
-
-    #Find nearest neighbours of each point
-    for id in range(N):
-        Points = Local_Pts(Pts,b,Mins,bN,id)
-        l =  NN_BF(Pts[id][:],Points,r)
-        NN[id].append(l)
+    #NN = NearestNeighbour(Pts,Ranges,N,r)
 
     nNodes = N
     nDOF = nNodes
     PtDiff = np.zeros(N-1)
-    for i in range(2,N-1):
-        PtDiff[i] = np.abs(np.sqrt((Pts[0,0]-Pts[i,0])**2+(Pts[0,1]-Pts[i,1])**2+(Pts[0,2]-Pts[i,2])**2))
-        print(PtDiff[i])
-    dx = np.min(PtDiff)
-    
-    print(dx)
-    
+
+    dx = 0.5
     # Order of the basis
-    order = 1
+    order = 1 
     # Support size
     fac = 2.001
-    supp = fac*order*dx
-    supphat = 0.9*dx
+    
     smooth=1
 
+    weight = np.ones((len(Pts),1))
 
-    shape, dshape = ModRK3D(Pts,supp,supphat,order,weight)
+    shape, shape_dx, shape_dy,shape_dz = ModRK3D(Pts,r,order,weight,Ranges)
 
 
