@@ -145,17 +145,19 @@ def NearestNeighbour(Pts,Ranges,r):
     b, Mins, bN, bIds = Pt_IDs(Pts,Ranges,r)
 
     #Create empty array
-    NN = (NN.append[] for i in range(N))
+    NN = []
+    for i in range(N):
+        NN = NN.append([])
 
     #Find nearest neighbours of each point
-    for id in range(N):
+    for i in range(N):
         #Find surrounding points and the associated ids to narrow search
-        Points, Ids = Local_Pts(Pts,b,bIds,Mins,bN,id,r)i
+        Points, Ids = Local_Pts(Pts,b,bIds,Mins,bN,i,r)
         #Find neighbour within radius
-        l =  NN_BF(Pts[id,:],Points,r)
+        l =  NN_BF(Pts[i,:],Points,r)
         #Add list of nearest points to overall list
-        NN[id].append(l)
-        print(id)
+        NN[i].append(l)
+        print(i)
 
     return NN
 
@@ -183,7 +185,8 @@ def FindD(Pts,Ranges,r):
 
     #Find greatest directional difference
     MeshD = np.zeros(3)
-    (MeshD[i] = Ranges[2*i+1]-Ranges[2*i] for i in range(3))
+    for i in range(3):
+        MeshD[i] = Ranges[2*i+1]-Ranges[2*i]
     MaxD = np.max(MeshD)
 
     #Create 'empty' arrays filled with overestimations for differences between 
@@ -233,8 +236,8 @@ def FindD(Pts,Ranges,r):
             ax = plt.axes(projection='3d')
             ax.plot3D(Pts[ClosestIds,0],Pts[ClosestIds,1],Pts[ClosestIds,2],'*')
             ax.plot3D(Pts[i,0],Pts[i,1],Pts[i,2],'r.')
-            ax.plot3D(Pts[i,0]+D[i]x*np.cos(t),Pts[i,1]+Dy[i]*np.sin(t),Pts[i,2]*np.ones(100))
-            ax.plot3D(Pts[i,0]+D[i]x*np.cos(t),Pts[i,1]*np.ones(100),Pts[i,2]+Dz[i]*np.sin(t))
+            ax.plot3D(Pts[i,0]+Dx[i]*np.cos(t),Pts[i,1]+Dy[i]*np.sin(t),Pts[i,2]*np.ones(100))
+            ax.plot3D(Pts[i,0]+Dx[i]*np.cos(t),Pts[i,1]*np.ones(100),Pts[i,2]+Dz[i]*np.sin(t))
             ax.plot3D(Pts[i,0]*np.ones(100),Pts[i,1]+Dy[i]*np.cos(t),Pts[i,2]+Dz[i]*np.sin(t))
             ax.set_xlabel('x',size=14)
             ax.set_ylabel('y',size=14)
@@ -438,15 +441,13 @@ if __name__=='__main__':
     Pts = vtk_to_numpy(polydata.GetPoints().GetData())
     Ranges = np.array(polydata.GetPoints().GetBounds())
     
-    Dx, Dy, Dz = FindD(Pts,Ranges,r)
-
+    #Find Dx, Dy, Dz with local point search radius of 1.5
+    Dx, Dy, Dz = FindD(Pts,Ranges,1.5)
 
     #Define search radius
     r = 0.5
 
-    #Create empty array
-    #NN = NearestNeighbour(Pts,Ranges,r)
-
+    #Create empty arrays
     nNodes = len(Pts[:,0]) 
     nDOF = nNodes
     PtDiff = np.zeros(nNodes-1)
