@@ -225,12 +225,13 @@ def FindD(Pts,Ranges,r):
                 if (Dz[i]>abs(Pts[i,2]-Pts[j,2])) and (abs(Pts[i,2]-Pts[j,2])>0.2):
                     Dz[i] = round(abs(Pts[i,2]-Pts[j,2]),4)
         
+        '''
         #Plot examples of the point, with the closest points and approximate directional
         #ellipses, from dx, dy and dz estimations
         if i in [1,50,199]:
-            print('dx =',dx)
-            print('dy =',dy)
-            print('dz =',dz)
+            print('dx =',Dx[i])
+            print('dy =',Dy[i])
+            print('dz =',Dz[i])
             t = np.linspace(0, 2*pi, 100)
             fig = plt.figure()
             ax = plt.axes(projection='3d')
@@ -244,7 +245,7 @@ def FindD(Pts,Ranges,r):
             ax.set_zlabel('z',size=14)
             ax.set_title('Closest Points',size=14)
             plt.show()
-
+        '''
     return Dx, Dy, Dz
 
 def ModRK3D(nodes,r,order,weight,Ranges):
@@ -269,9 +270,9 @@ def ModRK3D(nodes,r,order,weight,Ranges):
     b, Mins, bN, bIds = Pt_IDs(nodes,Ranges,r)
     
     #Define empty array to save derivatives of shape function
-    shape_dx = np.zeros(nNodes)
-    shape_dy = np.zeros(nNodes)
-    shape_dz = np.zeros(nNodes)
+    shape_dx = np.zeros((nNodes,nNodes))
+    shape_dy = np.zeros((nNodes,nNodes))
+    shape_dz = np.zeros((nNodes,nNodes))
     
     #Define points of dodecahedron with centre (0,0,0)
     phi=0.5+np.sqrt(5./4.)
@@ -299,65 +300,86 @@ def ModRK3D(nodes,r,order,weight,Ranges):
     Pos[17,:]=[-phi,0.,1./phi]
     Pos[18,:]=[phi,0.,-1./phi]
     Pos[19,:]=[-phi,0.,-1./phi]
-    
 
-    for i in range(nNodes):
-        print('Node:',i)
-        for j in range(20):
-            #Get the dodecahedron point around the point
-            X = (nodes[i,:]+(Pos[j,:]/np.sqrt(sum((Pos[j,k]**2 for k in range(3)))))*r)
-            #Get the shape function of the point
-            shape = ModRK3DShape(X, nodes,supp,supphat,order,b,bIds,Mins,bN,i)
+    Pos = np.zeros((6,3))
+    Pos[0,:]=[0.,0.,1.]
+    Pos[1,:]=[0.,0.,-1.]
+    Pos[2,:]=[1.,0.,0.]
+    Pos[3,:]=[-1.,0.,0.]
+    Pos[4,:]=[0.,1.,0.]
+    Pos[5,:]=[0.,-1.,0.]
+    
+    for j in range(len(Pos)):
+        Pos[j,:] = (Pos[j,:]/np.sqrt(sum((Pos[j,k]**2 for k in range(3)))))
+
+    Shape = np.zeros((nNodes,nNodes))
+    for i in range(10):
+
+        #Get the dodecahedron point around the point
+        
+        print(i)
+        #Get the shape function of the point
+        shape_pt = ModRK3DShape(nodes[i,:],nodes,supp,supphat,order,b,bIds,Mins,bN,i)
+            
+        for j in range(len(Pos)):
+            X = (nodes[i,:]+(Pos[j,:])*r)
+            shape = ModRK3DShape(X,nodes,supp,supphat,order,b,bIds,Mins,bN,i)
+            print(shape[0:11])
             #Sum shape points for each dodecahedron point to find finite 
             #difference definition of derivatives
-            for k in range(len(shape)):
-                shape_dx[i] += shape[k]*Pos[j,0]
-                shape_dy[i] += shape[k]*Pos[j,1]
-                shape_dz[i] += shape[k]*Pos[j,2]
+            
+            shape_dx[i,:] += shape*Pos[j,0]
+            shape_dy[i,:] += shape*Pos[j,1]
+            shape_dz[i,:] += shape*Pos[j,2]
+
+        Shape[i,:] = shape_pt
         #Get derivatives
-        shape_dx[i] *= 3/20
-        shape_dy[i] *= 3/20
-        shape_dz[i] *= 3/20
+        shape_dx[i,:] *= 3/(r*len(Pos))
+        shape_dy[i,:] *= 3/(r*len(Pos))
+        shape_dz[i,:] *= 3/(r*len(Pos))
     
-    return shape, shape_dx, shape_dy,shape_dz
+    return Shape, shape_dx, shape_dy,shape_dz
 
 def ModRK3DShape(node,nodes,supp,supphat,order,b,bIds,Mins,bN,i):
     '''
     Get shape function for a node
 
-    Inputs: node - node of interest
-            nodes - all nodes
-            supp - support radius
-            supphat - support radius for phi_hat
-            order -  function
-            b - list of points in box locations
-            bIds - list of point ids in box locations
-            Mins - Minimums of 3 directions
-            bN - Number of boxes in a direction
-            i - index of node of interest
+    Inputs: node -- node of interest
+            nodes -- all nodes
+            supp -- support radius
+            supphat -- support radius for phi_hat
+            order --  function
+            b -- list of points in box locations
+            bIds -- list of point ids in box locations
+            Mins -- Minimums of 3 directions
+            bN -- Number of boxes in a direction
+            i -- index of node of interest
 
-    Outputs: shape function
+    Outputs:shape -- shape function
+            nLP -- Number of Local points
     '''
 
     #Create empty arrays
     nNodes = len(nodes)
-    shape = np.zeros((nNodes,nNodes))
-    M = np.zeros((nb,nb))
-    Fhat = np.zeros((4,1))
+    
     nb = 3+1
     
+    M = np.zeros((nb,nb))
+    Fhat = np.zeros((4,1))
+
     #Get local points and the respective ids
     Local_Points, LP_Ids = Local_Pts(nodes,b,bIds,Mins,bN,i,r)
 
     #Number of local points
     nLP = len(Local_Points)
-    shape = np.zeros(nLP)
-    for j in range(nLP):
-        s = Local_Points[j][:]
+    
+    shape = np.zeros(nNodes)
+    for j in LP_Ids:
+        s = nodes[j,:]
         #Define difference vector
         Diff  = node-s
         #Define difference magnitude
-        DiffMag = np.sqrt(sum((Diff[k]**2 for k in range(3))))
+        DiffMag = np.sqrt(sum((Diff[k]**2 for k in range(3))))        
         #Define phi and phi_hat
         phi=calc_phi(DiffMag,supp)
         phihat=calc_phi(DiffMag,supphat)
@@ -367,15 +389,17 @@ def ModRK3DShape(node,nodes,supp,supphat,order,b,bIds,Mins,bN,i):
         Fhat += HT*phihat
  
     #Get inverse of M
+
     invM = np.linalg.inv(M)
     
-    for j in range(nLP):
+    for j in LP_Ids:
         # Calculate different shape functions 
-        s=Local_Points[j][:]
+        s = nodes[j,:]
         #Define difference vector
         Diff = node-s
         #Get difference magnitude
         DiffMag = np.sqrt(sum((Diff[k]**2 for k in range(3))))
+        #if not DiffMag ==0:
         #Define phi and phi_hat
         phi=calc_phi(DiffMag,supp)
         phihat=calc_phi(DiffMag,supphat)
@@ -435,6 +459,7 @@ if __name__=='__main__':
     reader.ReadAllVectorsOn()
     reader.Update()
 
+    '''
     ######################################
     # Define File Data
     polydata  = reader.GetOutput()
@@ -443,9 +468,22 @@ if __name__=='__main__':
     
     #Find Dx, Dy, Dz with local point search radius of 1.5
     Dx, Dy, Dz = FindD(Pts,Ranges,1.5)
+    '''
+
+    x = np.linspace(0, 10, 10)
+    y = np.linspace(0, 10, 10)
+    z = np.linspace(0, 10, 10)
+    Pts = np.zeros((1000,3))
+
+    for i in range(len(x)):
+        for j in range(len(y)):
+            for k in range(len(z)):
+                Pts[k+10*j+100*i,:] = [x[i], y[j], z[k]]
+
+    Ranges = [0,10,0,10,0,10]
 
     #Define search radius
-    r = 0.5
+    r = 1.1
 
     #Create empty arrays
     nNodes = len(Pts[:,0]) 
@@ -459,6 +497,26 @@ if __name__=='__main__':
 
     weight = np.ones((len(Pts),1))
 
-    shape, shape_dx, shape_dy,shape_dz = ModRK3D(Pts,r,order,weight,Ranges)
-
-
+    print('Find Shape function and its derivatives...')
+    shape, shape_dx, shape_dy, shape_dz = ModRK3D(Pts,r,order,weight,Ranges)
+    print('...Done')
+    print(shape)
+    b, Mins, bN, bIds = Pt_IDs(Pts,Ranges,r)
+    
+    #Create empyt array for deformation gradient
+    F = np.zeros((3,3))
+    '''
+    for i in range(nNodes):
+        F = np.zeros((3,3))
+        Local_Points, LP_Ids = Local_Pts(Pts,b,bIds,Mins,bN,i,r)
+        #Number of local points
+        nLP = len(Local_Points)
+        for j in LP_Ids:
+            X = Pts[j,:]
+            F[0,:] += shape_dx[j,i]*X
+            F[1,:] += shape_dy[j,i]*X
+            F[2,:] += shape_dz[j,i]*X
+        print('Point_',i,':')
+        print('F=',F)
+    '''
+    
