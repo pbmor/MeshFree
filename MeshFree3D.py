@@ -2,13 +2,59 @@ import numpy as np
 import os
 import sys
 import math
-from vtk.util.numpy_support import vtk_to_numpy
-from vtk.numpy_interface import dataset_adapter as dsa
-import vtk
-from statistics import mode
+#from vtk.util.numpy_support import vtk_to_numpy
+#from vtk.numpy_interface import dataset_adapter as dsa
+#import vtk
+#from statistics import mode
 import matplotlib.pyplot as plt
 from matplotlib.pyplot import figure
 from math import pi
+import warnings
+
+class BoxSearch:
+    def __init__(self,Points,dx,dy=None,dz=None):
+        if dy is None:
+            dy,dz = dx, dx
+        self.dx, self.dy, self.dz = dx,dy,dz
+        self._minx,self._maxx,self._miny,self._maxy,self._minz,self._maxz = np.min(Points[:,0]),np.max(Points[:,0]),np.min(Points[:,1]),np.max(Points[:,1]),np.min(Points[:,2]),np.max(Points[:,2])
+
+        self._minx -= dx
+        self._miny -= dy
+        self._minz -= dz
+        self._maxx += dx
+        self._maxy += dy
+        self._maxz += dz
+
+        self._nx,self._ny,self._nz = int((self._maxx-self._minx)/self.dx),int((self._maxy-self._miny)/self.dy),int((self._maxz-self._minz)/self.dz)
+        self._N = self._nx*self._ny*self._nz
+        self._Box = [[] for i in range(self._N)]
+
+        nPts = len(Points)
+        for i in range(nPts):
+            bid = self.BoxID(Points[i])
+            self._Box[bid].append(i)
+
+    def BoxID(self,X,dix=0,diy=0,diz=0):
+        ix,iy,iz = int((X[0]-self._minx)/self.dx),int((X[1]-self._miny)/self.dy),int((X[2]-self._minz)/self.dz)
+        ix += dix
+        iy += diy
+        iz += diz
+
+        return ix*self._ny*self._nz + iy*self._nz + iz
+
+    def neighb(self,x):
+        if x[0]<self._minx or x[0]>self._maxx or x[1]<self._miny or x[1]>self._maxy or x[2]<self._minz or x[2]>self._maxz:
+            warnings.warn("Point x is out of range of the box")
+            return []
+
+        ids = []
+        for dix in [-1,0,1]:
+            for diy in [-1,0,1]:
+                for diz in [-1,0,1]:
+                    bid = self.BoxID(x,dix,diy,diz)
+                    ids.extend(self._Box[bid])
+
+        return ids
 
 def NN_BF(Pt,Pts,r):
     '''
@@ -313,7 +359,7 @@ def ModRK3D(nodes,r,order,weight,Ranges):
         Pos[j,:] = (Pos[j,:]/np.sqrt(sum((Pos[j,k]**2 for k in range(3)))))
 
     Shape = np.zeros((nNodes,nNodes))
-    for i in range(10):
+    for i in range(nNodes):
 
         #Get the dodecahedron point around the point
         
@@ -324,7 +370,7 @@ def ModRK3D(nodes,r,order,weight,Ranges):
         for j in range(len(Pos)):
             X = (nodes[i,:]+(Pos[j,:])*r)
             shape = ModRK3DShape(X,nodes,supp,supphat,order,b,bIds,Mins,bN,i)
-            print(shape[0:11])
+            #print(shape[0:11])
             #Sum shape points for each dodecahedron point to find finite 
             #difference definition of derivatives
             
@@ -448,7 +494,7 @@ def calc_phi(z,a):
 
 
 if __name__=='__main__':
-
+    '''
     #Get points
     Fname = '../RunVTK/Point_Clouds/bav02/propagated point clouds/seg05_to_01_bav02_root_pointcloud.vtk'
  
@@ -458,7 +504,7 @@ if __name__=='__main__':
     reader.ReadAllScalarsOn()
     reader.ReadAllVectorsOn()
     reader.Update()
-
+    '''
     '''
     ######################################
     # Define File Data
@@ -505,7 +551,7 @@ if __name__=='__main__':
     
     #Create empyt array for deformation gradient
     F = np.zeros((3,3))
-    '''
+    
     for i in range(nNodes):
         F = np.zeros((3,3))
         Local_Points, LP_Ids = Local_Pts(Pts,b,bIds,Mins,bN,i,r)
@@ -513,10 +559,10 @@ if __name__=='__main__':
         nLP = len(Local_Points)
         for j in LP_Ids:
             X = Pts[j,:]
-            F[0,:] += shape_dx[j,i]*X
-            F[1,:] += shape_dy[j,i]*X
-            F[2,:] += shape_dz[j,i]*X
+            F[0,:] += shape_dx[i,j]*X
+            F[1,:] += shape_dy[i,j]*X
+            F[2,:] += shape_dz[i,j]*X
         print('Point_',i,':')
         print('F=',F)
-    '''
+    
     
