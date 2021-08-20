@@ -319,11 +319,11 @@ def ModRK3D(nodes,r,order,weight,Ranges):
         
         print(i)
         #Get the shape function of the point
-        shape_pt = ModRK3DShape(nodes[i,:],nodes,supp,supphat,order,b,bIds,Mins,bN,i)
+        shape_pt, LP_Ids = ModRK3DShape(nodes[i,:],nodes,supp,supphat,order,b,bIds,Mins,bN,i)
             
         for j in range(len(Pos)):
             X = (nodes[i,:]+(Pos[j,:])*r)
-            shape = ModRK3DShape(X,nodes,supp,supphat,order,b,bIds,Mins,bN,i)
+            shape, LP_Ids = ModRK3DShape(X,nodes,supp,supphat,order,b,bIds,Mins,bN,i)
             print(shape[0:11])
             #Sum shape points for each dodecahedron point to find finite 
             #difference definition of derivatives
@@ -409,7 +409,7 @@ def ModRK3DShape(node,nodes,supp,supphat,order,b,bIds,Mins,bN,i):
         #Save shape function
         shape[j] = H.dot(invM.dot((HT0-Fhat)))*phi+phihat
     
-    return shape
+    return shape, LP_Ids
 
 def basis(x,order):
     '''
@@ -483,7 +483,7 @@ if __name__=='__main__':
     Ranges = [0,10,0,10,0,10]
 
     #Define search radius
-    r = 1.1
+    r = 2.1
 
     #Create empty arrays
     nNodes = len(Pts[:,0]) 
