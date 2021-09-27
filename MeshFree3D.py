@@ -9,159 +9,60 @@ from statistics import mode
 import matplotlib.pyplot as plt
 from matplotlib.pyplot import figure
 from math import pi
+import warnings
 
-def NN_BF(Pt,Pts,r):
-    '''
-    A function that uses the brute force approach to find the nearest neighbours 
-    of a given point, i.e. the points within a given radius.
+class BoxSearch:
+    def __init__(self,Points,dx,dy=None,dz=None):
+        if dy is None:
+            dy,dz = dx, dx
+        self.dx, self.dy, self.dz = dx,dy,dz
+        self._minx,self._maxx,self._miny,self._maxy,self._minz,self._maxz = np.min(Points[:,0]),np.max(Points[:,0]),np.min(Points[:,1]),np.max(Points[:,1]),np.min(Points[:,2]),np.max(Points[:,2])
 
-    Inputs:  Pt - The point of interest
-             Pts - An array of all the nodes in the mesh
-             r - The radius of region in which to find the points
+        self._minx -= dx
+        self._miny -= dy
+        self._minz -= dz
+        self._maxx += dx
+        self._maxy += dy
+        self._maxz += dz
 
-    Outputs: l - A list of the nearest points
+        self._nx,self._ny,self._nz = int((self._maxx-self._minx)/self.dx),int((self._maxy-self._miny)/self.dy),int((self._maxz-self._minz)/self.dz)
+        self._N = (self._nx+2)*(self._ny+2)*(self._nz+2)
+        #self._N = (self._nx)*(self._ny)*(self._nz)
+        self._Box = [[] for i in range(self._N)]
+        self._PtIDs = [[] for i in range(self._N)]
+        
+        nPts = len(Points)
+        
+        for i in range(nPts):
+            bid = self.BoxID(Points[i])
+            self._Box[bid].append(Points[i])
+            self._PtIDs[bid].append(i)
 
-    Relies on a reasonable estimation of the search radius.
-    '''
+    def BoxID(self,X,dix=0,diy=0,diz=0):
+        ix,iy,iz = (int((X[0]-self._minx)/self.dx)+1),(int((X[1]-self._miny)/self.dy)+1),(int((X[2]-self._minz)/self.dz)+1)
+        #ix,iy,iz = (int((X[0]-self._minx)/self.dx)),(int((X[1]-self._miny)/self.dy)),(int((X[2]-self._minz)/self.dz))
+        ix += dix
+        iy += diy
+        iz += diz
 
-    #The number of points
-    N = len(Pts)
+        return ix*self._ny*self._nz + iy*self._nz + iz
 
-    l = []
-    for i in range(N):
-        #Find euclidean distance 
-        ED = np.sqrt(sum((Pt[k]-Pts[i,k])**2 for k in range(3)))
-        if (ED<=r) and not (Pt[:] == Pts[i,:]):
-            #Add point to the list if the the ED is within the rdius and it is not 
-            #the same point
-            l.append(Pts[i][:])
+    def neighb(self,x):
+        if x[0]<self._minx or x[0]>self._maxx or x[1]<self._miny or x[1]>self._maxy or x[2]<self._minz or x[2]>self._maxz:
+            warnings.warn("Point x is out of range of the box")
+            return []
 
-    return l
+        ids = []
+        for dix in [-1,0,1]:
+            for diy in [-1,0,1]:
+                for diz in [-1,0,1]:
+                    bid = self.BoxID(x,dix,diy,diz)
+                    ids.extend(self._PtIDs[bid])
 
-def Pt_IDs(Pts,Ranges,r):
-    '''
-    This function assigns each point to a 'box' in the mesh region.
+        return ids
 
-    Inputs: Pts - Array of the nodes of size N x 3, where N is the number of nodes
-            Ranges - the maximums and minimums in the 3 directions, as a 1 x 6 array,
-                    where the format is [x_min, x_max, y_min, y_max, z_min, z_max]
-            r - Size of the box side length that will divide up the region. Requires 
-                    an estimate that will create boxes that encompass some point 
-                    locations but not too many. 
 
-    Outputs: b - A list of the points in each 'box'
-             Mins - The minimum value in the three directions
-             bN - The number of boxes in a given direction(the same in every direction)
-             bIds - A list of the point ids in each 'box' that will relate to the 
-                    original array of points in Pts
-
-    Relies on a reasonable estimation of the point spacing
-    '''
-
-    N = len(Pts)
-
-    Diff = np.zeros(3)
-    Mins = np.zeros(3)
-    Mins[0] = Ranges[0]
-    Mins[1] = Ranges[2]
-    Mins[2] = Ranges[4]
-    for i in range(3):
-        Diff[i] = Ranges[2*i+1] - Ranges[2*i]
-
-    bN = int(np.max(Diff)/r)+1
-    N = len(Pts[:,0])
-
-    bIDi = np.zeros(N)
-    bIDj = np.zeros(N)
-    bIDk = np.zeros(N)
-    b = [[[[] for i in range(bN)] for j in range(bN)] for k in range(bN)]    
-    bIds = [[[[] for i in range(bN)] for j in range(bN)] for k in range(bN)]
-
-    for id in range(N):
-        i = int((Pts[id,0]-Mins[0])/r)
-        j = int((Pts[id,1]-Mins[1])/r)
-        k = int((Pts[id,2]-Mins[2])/r)
-
-        b[i][j][k].append(Pts[id,:])
-        bIds[i][j][k].append(id)
-
-    return b, Mins, bN, bIds
-
-def Local_Pts(Pts,b,bIds,Mins,bN,pt_id,r):
-    '''
-    Find the points and the respective ids in the surrounding boxes of a given point
-
-    Inputs: Pts - All points in mesh, dimensions N x 3
-            b - list of the points assigned to each box
-            bIds - list of point ids assigned to each box
-            Mins - Minimums of the mesh in x, y, z directions
-            pt_id - id of the point of interest
-            r - search radius
-
-    Outputs: Points - list of point in the box of the point and surrounding boxes
-             Ids - list of point ids in the box of the point and surrounding boxes
-
-    Relies on a reasonable estimation of the point spacing
-    '''
-    Points = []
-    Ids = []
-    # Find index for the box that the point is in
-    i = int((Pts[pt_id,0]-Mins[0])/r)
-    j = int((Pts[pt_id,1]-Mins[1])/r)
-    k = int((Pts[pt_id,2]-Mins[2])/r)
-    for I in [-1,0,1]:
-        for J in [-1,0,1]:
-            for K in [-1,0,1]:
-                #Get indices of surrounding boxes
-                Iid = int(i+I)
-                Jid = int(j+J)
-                Kid = int(k+K)
-                if (0<= Iid <bN) and (0<=Jid <bN) and (0<=Kid<bN):
-                    #Save points and the associated indices
-                    Points += b[Iid][Jid][Kid]
-                    Ids += bIds[Iid][Jid][Kid]
-
-    return Points, Ids
-
-def NearestNeighbour(Pts,Ranges,r):
-    '''
-    A function that creates a list of the neighbours within a radius for each 
-    point in the mesh.
-
-    Inputs: Pts - All points in mesh, dimensions N x 3
-            Range - The maximums and minimums in the 3 directions, as a 1 x 6 array,
-                    where the format is [x_min, x_max, y_min, y_max, z_min, z_max]
-            r - search radius
-
-    Outputs: NN - List of list of neighbours for each point.
-
-    Relies on a reasonable estimation of the point spacing
-    '''
-
-    #Number of points
-    N = len(Pts[:,0])
-
-    #Assign boxes to the points
-    b, Mins, bN, bIds = Pt_IDs(Pts,Ranges,r)
-
-    #Create empty array
-    NN = []
-    for i in range(N):
-        NN = NN.append([])
-
-    #Find nearest neighbours of each point
-    for i in range(N):
-        #Find surrounding points and the associated ids to narrow search
-        Points, Ids = Local_Pts(Pts,b,bIds,Mins,bN,i,r)
-        #Find neighbour within radius
-        l =  NN_BF(Pts[i,:],Points,r)
-        #Add list of nearest points to overall list
-        NN[i].append(l)
-        print(i)
-
-    return NN
-
-def FindD(Pts,Ranges,r):
+def FindD(Pts,Ranges,r,boxes):
     '''
     A function to find the standard distance between node points in the three 
     principle directions.
@@ -197,11 +98,12 @@ def FindD(Pts,Ranges,r):
     Dz = (1.1*MaxD)*np.ones(N)
 
     #Get boxes of mesh
-    b, Mins, bN, bIds = Pt_IDs(Pts,Ranges,r)
+    #b, Mins, bN, bIds = Pt_IDs(Pts,Ranges,r)
 
     for i in range(N):
         # Find local points to reduce
-        Points, PointIds = Local_Pts(Pts,b,bIds,Mins,bN,i,r)
+        PointIds =  boxes.neighb(Pts[i,:])
+        #Points, PointIds = Local_Pts(Pts,b,bIds,Mins,bN,i,r)
         # Find directional distances between each point with their 'local points' 
         for j in PointIds:
             Diff[i,j] = np.sqrt(sum(((Pts[i,k]-Pts[j,k])**2 for k in range(3))))
@@ -225,30 +127,9 @@ def FindD(Pts,Ranges,r):
                 if (Dz[i]>abs(Pts[i,2]-Pts[j,2])) and (abs(Pts[i,2]-Pts[j,2])>0.2):
                     Dz[i] = round(abs(Pts[i,2]-Pts[j,2]),4)
         
-        '''
-        #Plot examples of the point, with the closest points and approximate directional
-        #ellipses, from dx, dy and dz estimations
-        if i in [1,50,199]:
-            print('dx =',Dx[i])
-            print('dy =',Dy[i])
-            print('dz =',Dz[i])
-            t = np.linspace(0, 2*pi, 100)
-            fig = plt.figure()
-            ax = plt.axes(projection='3d')
-            ax.plot3D(Pts[ClosestIds,0],Pts[ClosestIds,1],Pts[ClosestIds,2],'*')
-            ax.plot3D(Pts[i,0],Pts[i,1],Pts[i,2],'r.')
-            ax.plot3D(Pts[i,0]+Dx[i]*np.cos(t),Pts[i,1]+Dy[i]*np.sin(t),Pts[i,2]*np.ones(100))
-            ax.plot3D(Pts[i,0]+Dx[i]*np.cos(t),Pts[i,1]*np.ones(100),Pts[i,2]+Dz[i]*np.sin(t))
-            ax.plot3D(Pts[i,0]*np.ones(100),Pts[i,1]+Dy[i]*np.cos(t),Pts[i,2]+Dz[i]*np.sin(t))
-            ax.set_xlabel('x',size=14)
-            ax.set_ylabel('y',size=14)
-            ax.set_zlabel('z',size=14)
-            ax.set_title('Closest Points',size=14)
-            plt.show()
-        '''
     return Dx, Dy, Dz
 
-def ModRK3D(nodes,r,order,weight,Ranges):
+def ModRK3D(node,nodes,r,order,boxes,i):
     '''
     A function to find the shape functions and derivatives of the points in a mesh
 
@@ -266,13 +147,11 @@ def ModRK3D(nodes,r,order,weight,Ranges):
     #Get number of nodes
     nNodes = len(nodes)
     
-    #Assign boxes of mesh
-    b, Mins, bN, bIds = Pt_IDs(nodes,Ranges,r)
-    
     #Define empty array to save derivatives of shape function
-    shape_dx = np.zeros((nNodes,nNodes))
-    shape_dy = np.zeros((nNodes,nNodes))
-    shape_dz = np.zeros((nNodes,nNodes))
+    Shape = np.zeros(nNodes)
+    shape_dx = np.zeros(nNodes)
+    shape_dy = np.zeros(nNodes)
+    shape_dz = np.zeros(nNodes)
     
     #Define points of dodecahedron with centre (0,0,0)
     phi=0.5+np.sqrt(5./4.)
@@ -312,51 +191,48 @@ def ModRK3D(nodes,r,order,weight,Ranges):
     for j in range(len(Pos)):
         Pos[j,:] = (Pos[j,:]/np.sqrt(sum((Pos[j,k]**2 for k in range(3)))))
 
-    Shape = np.zeros((nNodes,nNodes))
-    for i in range(10):
+    #for i in range(nNodes):        
+    print('Finding shape derivatives of node: ',i,' ',node)
 
-        #Get the dodecahedron point around the point
+    #Get the shape function of the point
+    shape_pt = ModRK3DShape(node,nodes,supp,supphat,order,boxes)
         
-        print(i)
-        #Get the shape function of the point
-        shape_pt, LP_Ids = ModRK3DShape(nodes[i,:],nodes,supp,supphat,order,b,bIds,Mins,bN,i)
-            
-        for j in range(len(Pos)):
-            X = (nodes[i,:]+(Pos[j,:])*r)
-            shape, LP_Ids = ModRK3DShape(X,nodes,supp,supphat,order,b,bIds,Mins,bN,i)
-            print(shape[0:11])
-            #Sum shape points for each dodecahedron point to find finite 
-            #difference definition of derivatives
-            
-            shape_dx[i,:] += shape*Pos[j,0]
-            shape_dy[i,:] += shape*Pos[j,1]
-            shape_dz[i,:] += shape*Pos[j,2]
+    for j in range(len(Pos)):
+        X = (node+(Pos[j,:])*r)
+        shape = ModRK3DShape(X,nodes,supp,supphat,order,boxes)
+    
+        #Sum shape points for each dodecahedron point to find finite 
+        #difference definition of derivatives
+        
+        shape_dx += shape*Pos[j,0]
+        shape_dy += shape*Pos[j,1]
+        shape_dz += shape*Pos[j,2]
 
-        Shape[i,:] = shape_pt
-        #Get derivatives
-        shape_dx[i,:] *= 3/(r*len(Pos))
-        shape_dy[i,:] *= 3/(r*len(Pos))
-        shape_dz[i,:] *= 3/(r*len(Pos))
+    #Get derivatives
+    Shape = shape_pt
+    shape_dx *= 3/(r*len(Pos))
+    shape_dy *= 3/(r*len(Pos))
+    shape_dz *= 3/(r*len(Pos))
     
     return Shape, shape_dx, shape_dy,shape_dz
 
-def ModRK3DShape(node,nodes,supp,supphat,order,b,bIds,Mins,bN,i):
+def ModRK3DShape(node,nodes,supp,supphat,order,boxes):
     '''
     Get shape function for a node
 
-    Inputs: node -- node of interest
-            nodes -- all nodes
-            supp -- support radius
-            supphat -- support radius for phi_hat
-            order --  function
-            b -- list of points in box locations
-            bIds -- list of point ids in box locations
-            Mins -- Minimums of 3 directions
-            bN -- Number of boxes in a direction
-            i -- index of node of interest
+    Inputs:  node -- node of interest
+             nodes -- all nodes
+             supp -- support radius
+             supphat -- support radius for phi_hat
+             order --  function
+             b -- list of points in box locations
+             bIds -- list of point ids in box locations
+             Mins -- Minimums of 3 directions
+             bN -- Number of boxes in a direction
+             i -- index of node of interest
 
-    Outputs:shape -- shape function
-            nLP -- Number of Local points
+    Outputs: shape -- shape function
+             nLP -- Number of Local points
     '''
 
     #Create empty arrays
@@ -368,10 +244,7 @@ def ModRK3DShape(node,nodes,supp,supphat,order,b,bIds,Mins,bN,i):
     Fhat = np.zeros((4,1))
 
     #Get local points and the respective ids
-    Local_Points, LP_Ids = Local_Pts(nodes,b,bIds,Mins,bN,i,r)
-
-    #Number of local points
-    nLP = len(Local_Points)
+    LP_Ids = boxes.neighb(node)
     
     shape = np.zeros(nNodes)
     for j in LP_Ids:
@@ -409,7 +282,7 @@ def ModRK3DShape(node,nodes,supp,supphat,order,b,bIds,Mins,bN,i):
         #Save shape function
         shape[j] = H.dot(invM.dot((HT0-Fhat)))*phi+phihat
     
-    return shape, LP_Ids
+    return shape
 
 def basis(x,order):
     '''
@@ -448,7 +321,7 @@ def calc_phi(z,a):
 
 
 if __name__=='__main__':
-
+        
     #Get points
     Fname = '../RunVTK/Point_Clouds/bav02/propagated point clouds/seg05_to_01_bav02_root_pointcloud.vtk'
  
@@ -458,8 +331,7 @@ if __name__=='__main__':
     reader.ReadAllScalarsOn()
     reader.ReadAllVectorsOn()
     reader.Update()
-
-    '''
+    
     ######################################
     # Define File Data
     polydata  = reader.GetOutput()
@@ -467,23 +339,28 @@ if __name__=='__main__':
     Ranges = np.array(polydata.GetPoints().GetBounds())
     
     #Find Dx, Dy, Dz with local point search radius of 1.5
-    Dx, Dy, Dz = FindD(Pts,Ranges,1.5)
+    #boxes = BoxSearch(Pts,1.5)
+    #Dx, Dy, Dz = FindD(Pts,Ranges,1.5,boxes)
     '''
-
-    x = np.linspace(0, 10, 10)
-    y = np.linspace(0, 10, 10)
-    z = np.linspace(0, 10, 10)
-    Pts = np.zeros((1000,3))
+    x = np.linspace(0, 10,6)#[0.0,1.0]
+    y = np.linspace(0, 10,6)
+    z = np.linspace(0, 10,6)
+    Pts = np.zeros((216,3))
 
     for i in range(len(x)):
         for j in range(len(y)):
             for k in range(len(z)):
-                Pts[k+10*j+100*i,:] = [x[i], y[j], z[k]]
+                Pts[k+6*j+36*i,:] = [x[i], y[j], z[k]]
+    '''
+    
 
-    Ranges = [0,10,0,10,0,10]
+    #print(Dx, Dy, Dz)
+    #print(np.max([Dx,Dy,Dz]))
+    #print(np.mean([Dx,Dy,Dz]))
+    r = 30.1#5.1#*0.7777777#*np.max([Dx,Dy,Dz])
 
-    #Define search radius
-    r = 2.1
+    #print (Ranges)
+    boxes = BoxSearch(Pts,r)
 
     #Create empty arrays
     nNodes = len(Pts[:,0]) 
@@ -492,31 +369,24 @@ if __name__=='__main__':
 
     # Order of the basis
     order = 1 
-    # Support size
-    fac = 2.001
 
-    weight = np.ones((len(Pts),1))
-
-    print('Find Shape function and its derivatives...')
-    shape, shape_dx, shape_dy, shape_dz = ModRK3D(Pts,r,order,weight,Ranges)
-    print('...Done')
-    print(shape)
-    b, Mins, bN, bIds = Pt_IDs(Pts,Ranges,r)
+    #print('Find Shape function and its derivatives...')
+    #shape, shape_dx, shape_dy, shape_dz = ModRK3D(Pts,r,order,boxes)
+    #print('...Done')
     
     #Create empyt array for deformation gradient
     F = np.zeros((3,3))
-    '''
+    
     for i in range(nNodes):
         F = np.zeros((3,3))
-        Local_Points, LP_Ids = Local_Pts(Pts,b,bIds,Mins,bN,i,r)
-        #Number of local points
-        nLP = len(Local_Points)
+        LP_Ids = boxes.neighb(Pts[i])
+        shape, shape_dx, shape_dy, shape_dz = ModRK3D(Pts[i,:],Pts,r,order,boxes,i)
         for j in LP_Ids:
             X = Pts[j,:]
-            F[0,:] += shape_dx[j,i]*X
-            F[1,:] += shape_dy[j,i]*X
-            F[2,:] += shape_dz[j,i]*X
+            F[0,:] += shape_dx[j]*X
+            F[1,:] += shape_dy[j]*X
+            F[2,:] += shape_dz[j]*X
         print('Point_',i,':')
         print('F=',F)
-    '''
+    
     
