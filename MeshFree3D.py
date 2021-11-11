@@ -390,31 +390,95 @@ if __name__=='__main__':
 
                 # Order of the basis
                 order = 1 
-
+                    
+                print(ref)
                 #Cycle through frames
-                for Fname in ref: #fnames:
+                
+                reader = vtk.vtkPolyDataReader()
+                reader.SetFileName(ref)
+                reader.ReadAllScalarsOn()
+                reader.Update()
+                polydata = reader.GetOutput()  
+                Pts = vtk_to_numpy(polydata.GetPoints().GetData())
+        
+                #Create empty array for deformation gradient
+                Shape, Shape_dx, Shape_dy, Shape_dz, LocalPoints_Ids = [], [], [], [], []
+                    
+                for i in range(nNodes):
+                    
+                    #Get List of local point ids
+                    LP_Ids = boxes.neighb(Pts[i])
+
+                    #Get shape functions
+                    shape, shape_dx, shape_dy, shape_dz = ModRK3D(Pts_ref[i,:],Pts_ref,r,supp,supphat,order,boxes,i)
+                    
+                    Shape.append(shape)
+                    Shape_dx.append(shape_dx)
+                    Shape_dy.append(shape_dy)
+                    Shape_dz.append(shape_dz)
+                    LocalPoints_Ids.append(LP_Ids)
+                    
+
+                for Fname in fnames:
                     reader = vtk.vtkPolyDataReader()
-                    reader.SetFileName(ref)
+                    reader.SetFileName(Fname)
                     reader.ReadAllScalarsOn()
                     reader.Update()
-                    polydata = reader.GetOutput()  
+                    polydata = reader.GetOutput()
                     Pts = vtk_to_numpy(polydata.GetPoints().GetData())
-        
-                    #Create empty array for deformation gradient
-                    F = np.zeros((3,3))
-        
-                    for i in range(nNodes):
-                        F = np.zeros((3,3))
-                        #Get List of local point ids
-                        LP_Ids = boxes.neighb(Pts[i])
-                        #Get shape functions
-                        shape, shape_dx, shape_dy, shape_dz = ModRK3D(Pts_ref[i,:],Pts_ref,r,supp,supphat,order,boxes,i)
-                        for j in LP_Ids: 
+                    nNodes = len(Pts[:,0])
+
+                    F_x = np.zeros((nNodes,3))   #[[] for i in range(nNodes)]
+                    F_y = np.zeros((nNodes,3))
+                    F_z = np.zeros((nNodes,3))
+                    F = np.zeros((nNodes,3,3))
+                    I1 = np.zeros(nNodes)
+                    I2 = np.zeros(nNodes)
+                    I3 = np.zeros(nNodes)
+                    J  = np.zeros(nNodes)
+                    for i in range(nNodes): #range(20):
+                        print('Calculating deformation gradients and invariants of point: ',i,' ',Pts[i,:])
+                        for j in LocalPoints_Ids[i]:
                             X = Pts[j,:]
-                            F[:,0] += shape_dx[j]*X
-                            F[:,1] += shape_dy[j]*X
-                            F[:,2] += shape_dz[j]*X
-            
-                        print('Point_',i,':')
-                        print('F=',F)
-    
+                            F_x[i,:] += Shape_dx[i][j]*X
+                            F_y[i,:] += Shape_dy[i][j]*X
+                            F_z[i,:] += Shape_dz[i][j]*X
+                            F[i,:,0] = F_x[i,:]
+                            F[i,:,1] = F_x[i,:]
+                            F[i,:,2] = F_x[i,:]
+                        
+                        f = F[i,:,:]
+                        C   = np.dot(f.T,f)
+                        C2  = np.dot(C,C)
+
+                        # Define principle strains and J
+                        trC   = C.trace()
+                        trC2  = C2.trace()
+                        I1[i] = trC
+                        I2[i] = (trC**2-trC2)/2
+                        I3[i] = np.linalg.det(C)
+                        J[i] = np.linalg.det(f)
+
+
+                    VectorData = [F_x,F_y,F_z,I1,I2,I3,J]
+                    VectorNames = ['Deformation Gradient (row 1)','Deformation Gradient (row 2)','Deformation Gradient (row 3)','I1','I2','I3','J']
+                    for i in range(len(VectorNames)): 
+                        arrayVector = vtk.util.numpy_support.numpy_to_vtk(VectorData[i], deep=True)
+                        arrayVector.SetName(VectorNames[i])
+                        dataVectors = polydata.GetPointData()
+                        dataVectors.AddArray(arrayVector)
+                        dataVectors.Modified()
+
+                    #################################
+                    # Write data to vtp files
+                    
+                    fname = 'NewVTK' + os.path.splitext(Fname)[0] + '.vtk'
+                    directory = os.path.dirname(fname)
+                    if not os.path.exists(directory):
+                        os.makedirs(directory)
+
+                    writer = vtk.vtkDataSetWriter()
+                    writer.SetFileName(fname)
+                    writer.SetInputData(polydata)
+                    print('Writing ',fname)
+                    writer.Write()
