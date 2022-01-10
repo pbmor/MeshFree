@@ -404,7 +404,7 @@ if __name__=='__main__':
                 #Create empty array for deformation gradient
                 Shape, Shape_dx, Shape_dy, Shape_dz, LocalPoints_Ids = [], [], [], [], []
                     
-                for i in range(nNodes):
+                for i in range(20):
                     
                     #Get List of local point ids
                     LP_Ids = boxes.neighb(Pts[i])
@@ -436,18 +436,19 @@ if __name__=='__main__':
                     I2 = np.zeros(nNodes)
                     I3 = np.zeros(nNodes)
                     J  = np.zeros(nNodes)
-                    for i in range(nNodes): #range(20):
+                    for i in range(20): #range(20):
                         print('Calculating deformation gradients and invariants of point: ',i,' ',Pts[i,:])
-                        for j in LocalPoints_Ids[i]:
+                        for j in range(nNodes):
                             X = Pts[j,:]
                             F_x[i,:] += Shape_dx[i][j]*X
                             F_y[i,:] += Shape_dy[i][j]*X
                             F_z[i,:] += Shape_dz[i][j]*X
                             F[i,:,0] = F_x[i,:]
-                            F[i,:,1] = F_x[i,:]
-                            F[i,:,2] = F_x[i,:]
-                        
+                            F[i,:,1] = F_y[i,:]
+                            F[i,:,2] = F_z[i,:]
+                                                
                         f = F[i,:,:]
+                        print(f)
                         C   = np.dot(f.T,f)
                         C2  = np.dot(C,C)
 

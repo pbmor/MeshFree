@@ -2,7 +2,6 @@ import numpy as np
 import os
 import sys
 import math
-import csv
 import glob
 import concurrent.futures
 from itertools import repeat
@@ -103,8 +102,42 @@ class BoxSearch:
         
         return ids
 
+def OrderList(flist,N,ref):
+    '''
+    Reorders the list so that the first file is the reference file, and returns new list of filenames and their IDs 
+    Keyword arguments:
+    flist -- list of filenames
+    N -- number of files
+    ref -- reference file name
+    For example: for a list [file1.vtk, file2.vtk, file3.vtk, file4.vtk, file7.vtk, file8.vtk] and ref = file3.vtk
+    it will return [file3.vtk file4.vtk file7.vtk file8.vtk file1.vtk file2.vtk], [3 4 7 8 1 2], and 3
+    '''
+    # Order filenames so that reference frame goes first
+    Fno = np.zeros(N)
 
-def ModRK3D(node,nodes,r,supp,supphat,order,boxes):
+    FListOrdered = [None]*N
+    common = os.path.commonprefix(flist)
+    for i, Fname in enumerate(flist):
+        X = Fname.replace(common,'')
+        X = X.replace('.vtk','')
+        X = np.fromstring(X, dtype=int, sep=' ')
+        #Get list of frame labels
+        Fno[i] = X
+    # Sort fname labels
+    Fno.sort()
+
+    # Get list of file names in new order
+    for i,F in enumerate(Fno):
+        for Fname in flist:
+            X = Fname.replace(common,'')
+            X = X.replace('.vtk','')
+            X = np.fromstring(X, dtype=int, sep=' ')
+            if X ==F:
+                FListOrdered[i] = Fname
+
+    return FListOrdered
+
+def ModRK3D(Batch,nodes,r,supp,supphat,order,boxes,Pos):
     '''
     A function to find the shape functions and derivatives of the a specific point
 
@@ -117,64 +150,37 @@ def ModRK3D(node,nodes,r,supp,supphat,order,boxes):
 
     #Get number of nodes
     nNodes = len(nodes)
-    
-    #Get List of local point ids
-    LP_Ids = boxes.neighb(node)
-    
+    nBatch = len(Batch)
     #Define empty array to save derivatives of shape function
-    shape_dx = np.zeros(nNodes)
-    shape_dy = np.zeros(nNodes)
-    shape_dz = np.zeros(nNodes)
+    shape_pt = np.zeros((nBatch,nNodes))
+    shape_dx = np.zeros((nBatch,nNodes))
+    shape_dy = np.zeros((nBatch,nNodes))
+    shape_dz = np.zeros((nBatch,nNodes))
+    LP_Ids   = []
+    for i in range(nBatch):
+        node = Batch[i]
+        #Get List of local point ids
+        LP_Ids.append(boxes.neighb(node))
     
-    #Define points of dodecahedron with centre (0,0,0)
-    phi=0.5+np.sqrt(5./4.)
-    Pos = np.zeros((20,3))
-    Pos[0,:]=[1.,1.,1.]
-    Pos[1,:]=[1.,1.,-1.]
-    Pos[2,:]=[1.,-1.,1.]
-    Pos[3,:]=[1.,-1.,-1.]
-    Pos[4,:]=[-1.,1.,1.]
-    Pos[5,:]=[-1.,1.,-1.]
-    Pos[6,:]=[-1.,-1.,1.]
-    Pos[7,:]=[-1.,-1.,-1.]
-
-    Pos[8,:]=[0.,1./phi,phi]
-    Pos[9,:]=[0.,1./phi,-phi]
-    Pos[10,:]=[0.,-1./phi,phi]
-    Pos[11,:]=[0.,-1./phi,-phi]
-
-    Pos[12,:]=[1./phi,phi,0.]
-    Pos[13,:]=[1./phi,-phi,0.]
-    Pos[14,:]=[-1./phi,phi,0.]
-    Pos[15,:]=[-1./phi,-phi,0.]
-
-    Pos[16,:]=[phi,0.,1./phi]
-    Pos[17,:]=[-phi,0.,1./phi]
-    Pos[18,:]=[phi,0.,-1./phi]
-    Pos[19,:]=[-phi,0.,-1./phi]
-    
-    #Normalise the dodecahedron locations
-    for j in range(len(Pos)):
-        Pos[j,:] = (Pos[j,:]/np.sqrt(sum((Pos[j,k]**2 for k in range(3)))))
-
-    #Get the shape function of the point
-    shape_pt = ModRK3DShape(node,nodes,supp,supphat,order,LP_Ids)
-    
-    #Get shape functions of the points of the dodecahdron surrounding the point of interest
-    for j in range(len(Pos)):
-        X = (node+(Pos[j,:])*r)
-        shape = ModRK3DShape(X,nodes,supp,supphat,order,LP_Ids)
-    
-        #Sum shape points for each dodecahedron point to find finite 
-        #difference definition of derivatives
-        shape_dx += shape*Pos[j,0]
-        shape_dy += shape*Pos[j,1]
-        shape_dz += shape*Pos[j,2]
-
-    #Get derivatives
-    shape_dx *= 3/(r*len(Pos))
-    shape_dy *= 3/(r*len(Pos))
-    shape_dz *= 3/(r*len(Pos))
+        #Get the shape function of the point
+        shape_pt[i,:] = ModRK3DShape(node,nodes,supp,supphat,order,boxes.neighb(node))
+        
+        #Get shape functions of the points of the dodecahdron surrounding the point of interest
+        for j in range(len(Pos)):
+            X = (node+(Pos[j,:])*r)
+            shape = ModRK3DShape(X,nodes,supp,supphat,order,boxes.neighb(node))
+        
+            #Sum shape points for each dodecahedron point to find finite 
+            #difference definition of derivatives
+            shape_dx[i,:] += shape*Pos[j,0]
+            shape_dy[i,:] += shape*Pos[j,1]
+            shape_dz[i,:] += shape*Pos[j,2]
+            
+        factor = 3/(r*len(Pos))
+        #Get derivatives
+        shape_dx[i,:] *= factor
+        shape_dy[i,:] *= factor
+        shape_dz[i,:] *= factor
     
     return shape_pt, shape_dx, shape_dy, shape_dz, LP_Ids
 
@@ -310,217 +316,226 @@ def FindFandInvariants(Pts, Shape_dx, Shape_dy, Shape_dz, LocalPoints_Ids, nNode
 
     return F, I1, I2, I3, J
 
-def RunMain(RunChoice):
-
+def RunMain(flist,ref,RunChoice,nBatch):
+                
     if RunChoice == 'NIFTI':
-        List_of_Subdirectories = sorted(glob.glob('./PointClouds/*'))
-    elif RunChoice == 'VTK':
-        List_of_Subdirectories = sorted(glob.glob('./PropagatedPointClouds/*'))
+        nii = nib.load(ref)
+        pixdim = nii.header['pixdim']
+        Vol = np.prod(pixdim[1:4])
+
+        DMax = np.max(pixdim[1:4])
+        DMin = np.min(pixdim[1:4])
+        os.system('/Applications/ITK-SNAP.app/Contents/bin/c3d ' + ref + ' -trim 5vox -o temp_vtk.vtk')
+
+        reader = vtk.vtkGenericDataObjectReader()
+        reader.SetFileName('temp_vtk.vtk')
+        reader.ReadAllScalarsOn()
+        reader.Update()
+        new_data = reader.GetOutput()
+
+        thresh = vtk.vtkThreshold()
+        thresh.SetInputData(new_data)
+        thresh.Scalars = ['POINTS', 'scalars']
+        thresh.ThresholdRange = [0.5, 5.0]
+        thresh.Update()
+        polydata = thresh.GetOutput()
+        Pts_ref = vtk_to_numpy(polydata.GetPoints().GetData())
+        
+    elif RunChoice == 'VTK':    
+        reader = vtk.vtkPolyDataReader()
+        reader.SetFileName(ref)
+        reader.ReadAllScalarsOn()
+        reader.Update()
+        polydata = reader.GetOutput()
+        Pts_ref = vtk_to_numpy(polydata.GetPoints().GetData())
+        DMax = 0.55
+        DMin = 0.48
+    if RunChoice =='NIFTI' or RunChoice == 'VTK':    
+        Vol  = DMin**3
+        r    = (Vol*(3/(4*math.pi)))**(1/3)
+        supp = 3.0*DMax
+        supphat = 0.9*DMin
     
-    if RunChoice == 'NIFTI' or RunChoice == 'VTK':
-        CommonOfDir = os.path.commonprefix(List_of_Subdirectories)
-        for d in List_of_Subdirectories:
-            DataDir = d.replace(CommonOfDir,'')
+        print('Finding boxes...')
+        boxes = BoxSearch(Pts_ref,r+supp)
+        print('Found')
+    
+        #Create empty arrays
+        nNodes = len(Pts_ref[:,0])
+    
+        # Order of the basis
+        order = 1 
         
-            with open('echoframetime.csv') as csv_file:
-                XLData = csv.reader(csv_file, delimiter=',')
-                for row in XLData:
-                    if DataDir == row[0]:
-                        DataInfo = row
-            if RunChoice == 'NIFTI':
-                fnames = sorted(glob.glob(d + '/*.nii.gz'))
-            elif RunChoice == 'VTK':
-                fnames = sorted(glob.glob(d + '/propagated point clouds/*.vtk'))
-            if not fnames:
-                print(DataDir," is empty")
-            else:
-                fdir = os.path.dirname(fnames[0])
-                # Check Directory
-                if not os.path.exists(fdir):
-                    print('Error: Path does not exist:', fdir)
-                    sys.exit()
-                if DataInfo[9] == 'n':
-                    print(DataDir,' is excluded')
-                else:
-                    print(DataDir,' is included')
-                    
-            #Choose reference frame
-            refN = int(DataInfo[4])-1 #Choose frame before valve opens
-            common = os.path.commonprefix(fnames)
-            for Fname in list(fnames):
-                if RunChoice == 'NIFTI':
-                    X = Fname.replace(common,'')
-                    common_suffix = '_'+d.replace('./PointClouds/','')+'_root_reslice.nii.gz'
-                    X = X.replace(common_suffix,'')
-                    X = np.fromstring(X, dtype=int, sep=' ')
-                    X=X[0]
-                    if X==refN:
-                        ref=Fname
-                elif RunChoice == 'VTK':
-                    X = Fname.replace(common,'')
-                    common_suffix = '_'+d.replace('./PointClouds/','')+'_root_pointcloud.vtk'
-                    X = X.replace(common_suffix,'')
-                    X = np.fromstring(X, dtype=int, sep=' ')
-                    X=X[0]
-                    if X==refN:
-                        ref=Fname
-                
-            if RunChoice == 'NIFTI':
-                nii = nib.load(Fname)
-                pixdim = nii.header['pixdim']
-                Vol = np.prod(pixdim[1:4])
+        #Define points of dodecahedron with centre (0,0,0)
+        phi=0.5+np.sqrt(5./4.)
+        Pos = np.zeros((20,3))
+        Pos[0,:]=[1.,1.,1.]
+        Pos[1,:]=[1.,1.,-1.]
+        Pos[2,:]=[1.,-1.,1.]
+        Pos[3,:]=[1.,-1.,-1.]
+        Pos[4,:]=[-1.,1.,1.]
+        Pos[5,:]=[-1.,1.,-1.]
+        Pos[6,:]=[-1.,-1.,1.]
+        Pos[7,:]=[-1.,-1.,-1.]
+    
+        Pos[8,:]=[0.,1./phi,phi]
+        Pos[9,:]=[0.,1./phi,-phi]
+        Pos[10,:]=[0.,-1./phi,phi]
+        Pos[11,:]=[0.,-1./phi,-phi]
+    
+        Pos[12,:]=[1./phi,phi,0.]
+        Pos[13,:]=[1./phi,-phi,0.]
+        Pos[14,:]=[-1./phi,phi,0.]
+        Pos[15,:]=[-1./phi,-phi,0.]
+    
+        Pos[16,:]=[phi,0.,1./phi]
+        Pos[17,:]=[-phi,0.,1./phi]
+        Pos[18,:]=[phi,0.,-1./phi]
+        Pos[19,:]=[-phi,0.,-1./phi]
         
-                DMax = np.max(pixdim[1:4])
-                DMin = np.min(pixdim[1:4])
-                os.system('/Applications/ITK-SNAP.app/Contents/bin/c3d ' + ref + ' -trim 5vox -o temp_vtk.vtk')
-        
-                reader = vtk.vtkGenericDataObjectReader()
-                reader.SetFileName('temp_vtk.vtk')
-                reader.ReadAllScalarsOn()
-                reader.Update()
-                new_data = reader.GetOutput()
-        
-                thresh = vtk.vtkThreshold()
-                thresh.SetInputData(new_data)
-                thresh.Scalars = ['POINTS', 'scalars']
-                thresh.ThresholdRange = [0.5, 5.0]
-                thresh.Update()
-                polydata = thresh.GetOutput()
-                Pts_ref = vtk_to_numpy(polydata.GetPoints().GetData())
-                
-            elif RunChoice == 'VTK':    
+        #Normalise the dodecahedron locations
+        for j in range(len(Pos)):
+            Pos[j,:] = (Pos[j,:]/np.sqrt(sum((Pos[j,k]**2 for k in range(3)))))
             
-                reader = vtk.vtkPolyDataReader()
-                reader.SetFileName(ref)
-                reader.ReadAllScalarsOn()
-                reader.Update()
-                polydata = reader.GetOutput()
-                Pts_ref = vtk_to_numpy(polydata.GetPoints().GetData())
-                DMax = 0.55
-                DMin = 0.48
-                            
-                '''
-                #Guess DMin and DMax
-                DMin = 0.3
-                DMax = 0.7
+        nBatch = 8
+        BatchPts = []
+        for i in range(nBatch):
+            BatchPts.append(Pts_ref[int(np.floor((nNodes*i)/nBatch)):int(np.floor((nNodes*(i+1))/nBatch)),:])
+            if i == nBatch:
+                BatchPts.append(Pts_ref[int(np.floor((nNodes*i)/nBatch)):nNodes,:])
         
-                Vol  = DMin**3
-                r    = (Vol*(3/(4*math.pi)))**(1/3)
-                supp = 3.0*DMax
-                supphat = 0.9*DMin
+        print('Finding Shape Functions...')
+        Shape, Shape_dx, Shape_dy, Shape_dz, LocalPoints_Ids = [],[],[],[],[]
+        with concurrent.futures.ProcessPoolExecutor() as executor:
+            results = list(tqdm(executor.map(ModRK3D, BatchPts,repeat(Pts_ref),repeat(r),repeat(supp),repeat(supphat),repeat(order),repeat(boxes),repeat(Pos)),total = len(BatchPts)))
+            for result in results:
+                for i in range(len(result[0])):
+                    Shape.append(result[0][i])
+                    Shape_dx.append(result[1][i])
+                    Shape_dy.append(result[2][i])
+                    Shape_dz.append(result[3][i])
+                    LocalPoints_Ids.append(result[4][i])
         
-                print('Finding boxes...')
-                boxes = BoxSearch(Pts_ref,r+supp)
-                print('Found')
+        N = len(flist)
+        # ReOrder list to be 
+        FListOrdered = OrderList(flist, N, ref)
+        for X,Fname in enumerate(FListOrdered):
+            reader = vtk.vtkPolyDataReader()
+            reader.SetFileName(ref)
+            reader.ReadAllScalarsOn()
+            reader.Update()
+            polydata = reader.GetOutput()
+            Pts = vtk_to_numpy(polydata.GetPoints().GetData())
+            DMax = 0.55
+            DMin = 0.48
+    
+            F, I1, I2, I3, J = FindFandInvariants(Pts, Shape_dx, Shape_dy, Shape_dz, LocalPoints_Ids, nNodes)
+            #Save deformation gradient (as rows) and invariants to vtk files
+            F_flat = np.zeros((nNodes,9))
+            for i in range(nNodes):
+                F_flat[i,:] = F[i,:,:].ravel()
                 
-                Dx, Dy, Dz = FindD(Pts_ref,Ranges,r,boxes)
-                DMax = np.max([Dx,Dy,Dz])
-                DMin = np.min([Dx,Dy,Dz])
-                print(DMax,DMin)
-                '''
-            Vol  = DMin**3
-            r    = (Vol*(3/(4*math.pi)))**(1/3)
-            supp = 3.0*DMax
-            supphat = 0.9*DMin
-        
-            print('Finding boxes...')
-            boxes = BoxSearch(Pts_ref,r+supp)
-            print('Found')
-        
-            #Create empty arrays
-            nNodes = len(Pts_ref[:,0])
-        
-            # Order of the basis
-            order = 1 
+            VectorData = [F_flat,I1,I2,I3,J]
+            VectorNames = ['F (flat)','I1','I2','I3','J']
             
-            print('Finding Shape Functions...')
-            Shape, Shape_dx, Shape_dy, Shape_dz, LocalPoints_Ids = [],[],[],[],[]
-            with concurrent.futures.ProcessPoolExecutor(max_workers=4) as executor:
-                results = list(tqdm(executor.map(ModRK3D, Pts_ref,repeat(Pts_ref),repeat(r),repeat(supp),repeat(supphat),repeat(order),repeat(boxes)),total = len(Pts_ref)))
-                for result in results:    
-                    Shape.append(result[0])
-                    Shape_dx.append(result[1])
-                    Shape_dy.append(result[2])
-                    Shape_dz.append(result[3])
-                    LocalPoints_Ids.append(result[4])
-        
-            for Fname in fnames:
-                reader = vtk.vtkPolyDataReader()
-                reader.SetFileName(Fname)
-                reader.ReadAllScalarsOn()
-                reader.Update()
-                polydata = reader.GetOutput()
-                Pts = vtk_to_numpy(polydata.GetPoints().GetData())
-                nNodes = len(Pts[:,0])
-        
-                F, I1, I2, I3, J = FindFandInvariants(Pts, Shape_dx, Shape_dy, Shape_dz, LocalPoints_Ids, nNodes)
-                #Save deformation gradient (as rows) and invariants to vtk files
-                F_flat = np.zeros((nNodes,9))
-                for i in range(nNodes):
-                    F_flat[i,:] = F[i,:,:].ravel()
-                    
-                VectorData = [F_flat,I1,I2,I3,J]
-                VectorNames = ['F (flat)','I1','I2','I3','J']
+            for i in range(len(VectorNames)):
+                arrayVector = vtk.util.numpy_support.numpy_to_vtk(VectorData[i], deep=True)
+                arrayVector.SetName(VectorNames[i])
+                dataVectors = polydata.GetPointData()
+                dataVectors.AddArray(arrayVector)
+                dataVectors.Modified()
                 
-                for i in range(len(VectorNames)):
-                    arrayVector = vtk.util.numpy_support.numpy_to_vtk(VectorData[i], deep=True)
-                    arrayVector.SetName(VectorNames[i])
-                    dataVectors = polydata.GetPointData()
-                    dataVectors.AddArray(arrayVector)
-                    dataVectors.Modified()
-                    
-                #################################
-                # Write data to vtp files
-            
-                fname = 'NewVTK' + os.path.splitext(Fname)[0] + '.vtk'
-                directory = os.path.dirname(fname)
-                if not os.path.exists(directory):
-                    os.makedirs(directory)
+            #################################
+            # Write data to vtp files
         
-                writer = vtk.vtkDataSetWriter()
-                writer.SetFileName(fname)
-                writer.SetInputData(polydata)
-                print('Writing ',fname)
-                writer.Write()
+            fname = 'NewVTK' + os.path.splitext(Fname)[0].replace('.','') + '.vtk'
+            directory = os.path.dirname(fname)
+            if not os.path.exists(directory):
+                os.makedirs(directory)
+    
+            writer = vtk.vtkDataSetWriter()
+            writer.SetFileName(fname)
+            writer.SetInputData(polydata)
+            print('Writing ',fname)
+            writer.Write()
     
     if RunChoice == 'TEST':
-        x = np.linspace(0,10,6)
-        y = np.linspace(0,10,6)
-        z = np.linspace(0,10,6)
-        Pts = np.zeros((6**3,3))
+        res = 10
+        
+        x = np.linspace(0,10,res)
+        y = np.linspace(0,10,res)
+        z = np.linspace(0,10,res)
+        Pts = np.zeros((res**3,3))
         for i in range(len(x)):
             for j in range(len(y)):
                 for k in range(len(z)):
-                    Pts[i+6*j+36*k,:] = [x[i],y[j],z[k]]
-        DMax = 2.0
-        DMin = 1.9
-
+                    Pts[i+res*j+(res**2)*k,:] = [x[i],y[j],z[k]]
+        DMax = (10/(res+1))*1.05
+        DMin = (10/(res+1))*0.95
+        
         Vol  = DMin**3
         r    = (Vol*(3/(4*pi)))**(1/3)
         supp = 3.0*DMax
         supphat = 0.9*DMin
-
+        
         print('Finding boxes...')
         boxes = BoxSearch(Pts,r+supp)
         print('Found')
-
+        
         #Create empty arrays
         nNodes = len(Pts[:,0])
         
         # Order of the basis
         order = 1
-        print('Finding Shape functions...')
-        Shape, Shape_dx, Shape_dy, Shape_dz, LocalPoints_Ids = [], [], [], [], []
-        with concurrent.futures.ProcessPoolExecutor() as executor:
-            results = list(tqdm(executor.map(ModRK3D, Pts,repeat(Pts),repeat(r),repeat(supp),repeat(supphat),repeat(order),repeat(boxes)),total = len(Pts)))
-            print(results)
+        #Define points of dodecahedron with centre (0,0,0)
+        phi=0.5+np.sqrt(5./4.)
+        Pos = np.zeros((20,3))
+        Pos[0,:]=[1.,1.,1.]
+        Pos[1,:]=[1.,1.,-1.]
+        Pos[2,:]=[1.,-1.,1.]
+        Pos[3,:]=[1.,-1.,-1.]
+        Pos[4,:]=[-1.,1.,1.]
+        Pos[5,:]=[-1.,1.,-1.]
+        Pos[6,:]=[-1.,-1.,1.]
+        Pos[7,:]=[-1.,-1.,-1.]
+        
+        Pos[8,:]=[0.,1./phi,phi]
+        Pos[9,:]=[0.,1./phi,-phi]
+        Pos[10,:]=[0.,-1./phi,phi]
+        Pos[11,:]=[0.,-1./phi,-phi]
+        
+        Pos[12,:]=[1./phi,phi,0.]
+        Pos[13,:]=[1./phi,-phi,0.]
+        Pos[14,:]=[-1./phi,phi,0.]
+        Pos[15,:]=[-1./phi,-phi,0.]
+        
+        Pos[16,:]=[phi,0.,1./phi]
+        Pos[17,:]=[-phi,0.,1./phi]
+        Pos[18,:]=[phi,0.,-1./phi]
+        Pos[19,:]=[-phi,0.,-1./phi]
+        
+        #Normalise the dodecahedron locations
+        for j in range(len(Pos)):
+            Pos[j,:] = (Pos[j,:]/np.sqrt(sum((Pos[j,k]**2 for k in range(3)))))
+            
+        BatchPts = []
+        for i in range(nBatch):
+            BatchPts.append(Pts[int(np.floor((nNodes*i)/nBatch)):int(np.floor((nNodes*(i+1))/nBatch)),:])
+            if i == nBatch:
+                BatchPts.append(Pts[int(np.floor((nNodes*i)/nBatch)):nNodes,:])
+        
+        print('Finding Shape Functions...')
+        Shape, Shape_dx, Shape_dy, Shape_dz, LocalPoints_Ids = [],[],[],[],[]
+        with concurrent.futures.ProcessPoolExecutor(max_workers=8) as executor:
+            results = list(tqdm(executor.map(ModRK3D, BatchPts,repeat(Pts),repeat(r),repeat(supp),repeat(supphat),repeat(order),repeat(boxes),repeat(Pos)),total = len(BatchPts)))
             for result in results:
-                Shape.append(result[0])
-                Shape_dx.append(result[1])
-                Shape_dy.append(result[2])
-                Shape_dz.append(result[3])
-                LocalPoints_Ids.append(result[4])
-
+                for i in range(len(result[0])):
+                    Shape.append(result[0][i])
+                    Shape_dx.append(result[1][i])
+                    Shape_dy.append(result[2][i])
+                    Shape_dz.append(result[3][i])
+                    LocalPoints_Ids.append(result[4][i])
+        
         TestF = np.array([[2.0,1.0,1.0],[0.0,3.0,1.0],[1.0,0.0,4.0]])
         TestC = np.array([10.0,20.0,15.0])
         pts = np.array(Pts)
@@ -529,10 +544,11 @@ def RunMain(RunChoice):
         TestPts += TestC
         
         F, I1, I2, I3, J = FindFandInvariants(TestPts, Shape_dx, Shape_dy, Shape_dz, LocalPoints_Ids, nNodes)
-        for i in range(nNodes):
-            print(f'Deformation gradient of node {i} is:')
-            print(F[i,:])
-
+        # for i in range(nNodes):
+            # print(f'Deformation gradient of node {i} is:')
+            # print(F[i,:])
+            
+    return results, Shape, Shape_dx, LocalPoints_Ids
 
 if __name__=='__main__':
     ''' 
@@ -542,7 +558,47 @@ if __name__=='__main__':
     'Test' - Runs a test version of the script in which a new cube mesh is created. This mesh is then used to find the shape functions and then the mesh is deformed with the deformation gradient F=[[2,1,1][0,3,1][1,0,4]]. Then the deformation gradients and invariants are found, and the deformation gradient is returned to confirm the system is working.
     '''
     __spec__ = "ModuleSpec(name='builtins', loader=<class '_frozen_importlib.BuiltinImporter'>)"
-    # RunMain('NIFTI')
-    RunMain('VTK')
-    # RunMain('TEST')
+    
+    WDIR = sys.argv[1]
+    refN = int(sys.argv[2])
+    RunChoice = sys.argv[3]
+    nBatch = sys.argv[4]
+    
+    print("Computing mesh-free root deformation gradients")
+    
+    fnames = sorted(glob.glob(os.path.join(WDIR,'*root*.vtk')))
+    fdir = os.path.dirname(fnames[0])
+    
+    if RunChoice != 'TEST':
+        if not fnames:
+            print(WDIR," is empty")
+        else:
+            fdir = os.path.dirname(fnames[0])
+            # Check Directory
+            if not os.path.exists(fdir):
+                print('Error: Path does not exist:', fdir)
+                sys.exit()
+                
+        common = os.path.commonprefix(fnames)
+        
+        for Fname in list(fnames):
+            X = Fname.replace(common,'')
+            # Get root name 
+            WDIR.replace('./PropagatedPointClouds/','')
+            WDIR.replace('/propagated point clouds/','')
+            rootname = WDIR
+            # Get file suffix
+            common_suffix = '_'+rootname+'_root_pointcloud.vtk'
+            # Get Frame number
+            X = X.replace(common_suffix,'')
+            X = np.fromstring(X, dtype=int, sep=' ')
+            X=X[0]
+            if X==refN:
+                ref=Fname
+    else:
+        fnames = []
+        ref = []
+                
+    results, Shape, Shape_dx, LocalPoints_Ids = RunMain(flist=fnames, ref=ref, RunChoice=RunChoice,nBatch=int(nBatch))
+    
     
